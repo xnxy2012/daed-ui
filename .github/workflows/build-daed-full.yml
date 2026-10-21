@@ -68,11 +68,14 @@ jobs:
 
       - name: Get version / filename
         id: meta
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             VERSION="${GITHUB_REF_NAME}"
           else
-            VERSION="${{ github.event.inputs.version || '0.0.0-custom' }}"
+            VERSION="${INPUT_VERSION//[[:space:]]/}"
+            VERSION="${VERSION:-0.0.0-custom}"
           fi
           NAME=$(jq ".[\"$GOOS-$GOARCH$GOAMD64\"].friendlyName" -r < install/friendly-filenames.json)
           echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
@@ -90,9 +93,9 @@ jobs:
       - name: make
         run: |
           mkdir -p ./bundled/
-          export VERSION=${{ steps.meta.outputs.VERSION }}
+          export VERSION="${{ steps.meta.outputs.VERSION }}"
           export GOFLAGS="-trimpath -modcacherw"
-          export OUTPUT=bundled/${{ steps.meta.outputs.BUNDLE_NAME }}
+          export OUTPUT="bundled/${{ steps.meta.outputs.BUNDLE_NAME }}"
           make
           cp ./install/daed.service ./bundled/
           cp ./install/daed.desktop ./bundled/
