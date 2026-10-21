@@ -412,6 +412,18 @@
     "idle": "未连接",
     "disconnected": "已断开",
     "empty": "暂无日志",
-    "endpoint": "日志流地址"
+    "endpoint": "日志流地址",
+    "tabConnections": "连接",
+    "tabLogs": "原始日志",
+    "all": "全部",
+    "emptyConnections": "暂无连接记录",
+    "colTime": "时间",
+    "colNetwork": "类型",
+    "colSource": "来源",
+    "colDestination": "目标",
+    "colOutbound": "规则 / 出站",
+    "colDialer": "节点",
+    "colPolicy": "策略",
+    "colProcess": "进程 / MAC"
   }
 }

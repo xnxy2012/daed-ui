@@ -412,6 +412,18 @@
     "idle": "Idle",
     "disconnected": "Disconnected",
     "empty": "No logs yet",
-    "endpoint": "Log stream endpoint"
+    "endpoint": "Log stream endpoint",
+    "tabConnections": "Connections",
+    "tabLogs": "Raw logs",
+    "all": "All",
+    "emptyConnections": "No connections yet",
+    "colTime": "Time",
+    "colNetwork": "Type",
+    "colSource": "Source",
+    "colDestination": "Destination",
+    "colOutbound": "Rule / Outbound",
+    "colDialer": "Node",
+    "colPolicy": "Policy",
+    "colProcess": "Process / MAC"
   }
 }
