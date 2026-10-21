@@ -2,7 +2,7 @@ import type { CSSProperties, ReactNode } from 'react'
 import type { ChartConfig } from '~/components/ui/chart'
 import dayjs from 'dayjs'
 import { Activity, ArrowDown, ArrowUp, Download, Link2, Radio, Upload } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from 'recharts'
 
@@ -174,17 +174,37 @@ export function TrafficOverview() {
     [chartWindowEnd, selectedWindow.seconds],
   )
 
+  // Fallback: if the backend reports a zero rate while its byte totals keep growing, derive the rate from the
+  // total delta between two consecutive polls.
+  const prevTotalsRef = useRef<{ t: number; up: number; down: number }>(undefined)
+  const [derivedRate, setDerivedRate] = useState({ up: 0, down: 0 })
+  useEffect(() => {
+    if (!runtimeOverview) return
+    const t = dayjs(runtimeOverview.updatedAt).valueOf()
+    const up = safeParseMetricTotal(runtimeOverview.uploadTotal)
+    const down = safeParseMetricTotal(runtimeOverview.downloadTotal)
+    const prev = prevTotalsRef.current
+    if (prev && t > prev.t && up >= prev.up && down >= prev.down) {
+      const dt = (t - prev.t) / 1000
+      setDerivedRate({ up: (up - prev.up) / dt, down: (down - prev.down) / dt })
+    }
+    prevTotalsRef.current = { t, up, down }
+  }, [runtimeOverview])
+
   const latestSample = useMemo(
     () => ({
-      uploadRate: runtimeOverview?.uploadRate ?? 0,
-      downloadRate: runtimeOverview?.downloadRate ?? 0,
+      uploadRate: runtimeOverview?.uploadRate || derivedRate.up,
+      downloadRate: runtimeOverview?.downloadRate || derivedRate.down,
       uploadTotal: safeParseMetricTotal(runtimeOverview?.uploadTotal),
       downloadTotal: safeParseMetricTotal(runtimeOverview?.downloadTotal),
       activeConnections: runtimeOverview?.activeConnections ?? 0,
       udpSessions: runtimeOverview?.udpSessions ?? 0,
     }),
-    [runtimeOverview],
+    [runtimeOverview, derivedRate],
   )
+
+  const bytesMissing =
+    latestSample.activeConnections > 0 && latestSample.uploadTotal === 0 && latestSample.downloadTotal === 0
 
   const uploadChartData = useMemo(
     () =>
@@ -224,6 +244,7 @@ export function TrafficOverview() {
             <CardTitle className="text-lg text-primary">{t('trafficOverview.title')}</CardTitle>
           </div>
         </div>
+        {bytesMissing && <p className="text-xs text-muted-foreground">{t('trafficOverview.bytesMissing')}</p>}
         <div className="flex flex-wrap items-center gap-2">
           {TIME_RANGE_OPTIONS.map((option) => (
             <TrafficRangeButton

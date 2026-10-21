@@ -638,6 +638,10 @@ export function OrchestratePage() {
             sortedNodes={sortedNodes}
             highlight={draggingResource?.type === DraggableResourceType.groupNode}
             nodeLatencies={nodeLatencies}
+            testingLatencies={testNodeLatenciesMutation.isPending}
+            onTestNodeLatencies={async (ids) => {
+              await testNodeLatenciesMutation.mutateAsync(ids)
+            }}
           />
           <SubscriptionResource
             sortedSubscriptions={sortedSubscriptions}

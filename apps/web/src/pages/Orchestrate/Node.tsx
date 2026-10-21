@@ -2,8 +2,10 @@ import type { QRCodeModalRef } from '~/components/QRCodeModal.tsx'
 import type { NodesQuery } from '~/schemas/gql/graphql.ts'
 import type { NodeLatencyProbeResult } from '~/apis'
 import { Droppable } from '@hello-pangea/dnd'
-import { Cloud, CloudUpload, Eye, FileInput, Pencil } from 'lucide-react'
+import { useStore } from '@nanostores/react'
+import { ChevronDown, ChevronUp, Cloud, CloudUpload, Eye, FileInput, Gauge, Pencil } from 'lucide-react'
 import { Fragment, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import { useTranslation } from 'react-i18next'
 import { useImportNodesMutation, useRemoveNodesMutation } from '~/apis/index.ts'
 import { EditNodeFormModal } from '~/components/EditNodeFormModal.tsx'
@@ -14,20 +16,39 @@ import { Section } from '~/components/Section.tsx'
 import { Button } from '~/components/ui/button.tsx'
 import { SimpleTooltip } from '~/components/ui/tooltip.tsx'
 import { cn } from '~/lib/utils'
+import { nodeListCollapsedAtom, nodeListExpandedAtom } from '~/store'
 import { formatLatencyLabel } from '~/utils/latency'
 
 export const NODE_DROPPABLE_ID = 'node-list'
+
+// Cards shown before the "show all" toggle. Only a prefix is rendered so drag indexes stay valid.
+const NODE_PREVIEW_COUNT = 8
 
 export function NodeResource({
   sortedNodes,
   highlight,
   nodeLatencies,
+  testingLatencies,
+  onTestNodeLatencies,
 }: {
   sortedNodes: NodesQuery['nodes']['edges']
   highlight?: boolean
   nodeLatencies?: Record<string, NodeLatencyProbeResult>
+  testingLatencies?: boolean
+  /** Omit ids to test every node. */
+  onTestNodeLatencies?: (ids?: string[]) => Promise<void>
 }) {
   const { t } = useTranslation()
+  const collapsed = useStore(nodeListCollapsedAtom)
+  const expandedAll = useStore(nodeListExpandedAtom)
+  const visibleNodes = collapsed ? [] : expandedAll ? sortedNodes : sortedNodes.slice(0, NODE_PREVIEW_COUNT)
+  const hiddenCount = sortedNodes.length - visibleNodes.length
+  const runTest = (ids?: string[]) => {
+    onTestNodeLatencies?.(ids).catch((error) => {
+      console.error('Failed to test node latencies', error)
+      toast.error(error instanceof Error ? error.message : t('latency.unavailable'))
+    })
+  }
 
   const [openedQRCodeModal, setOpenedQRCodeModal] = useState(false)
   const [openedImportNodeFormModal, setOpenedImportNodeFormModal] = useState(false)
@@ -50,11 +71,27 @@ export function NodeResource({
       iconPlus={<CloudUpload className="h-4 w-4" />}
       onCreate={() => setOpenedImportNodeFormModal(true)}
       actions={
-        <SimpleTooltip label={t('actions.configureNode')}>
-          <Button variant="ghost" size="icon" onClick={() => setOpenedConfigureNodeFormModal(true)}>
-            <FileInput className="h-4 w-4" />
-          </Button>
-        </SimpleTooltip>
+        <Fragment>
+          {sortedNodes.length > 0 && onTestNodeLatencies && (
+            <SimpleTooltip label={t('latency.testAllNodes')}>
+              <Button variant="ghost" size="icon" onClick={() => runTest()} loading={testingLatencies}>
+                <Gauge className="h-4 w-4" />
+              </Button>
+            </SimpleTooltip>
+          )}
+          <SimpleTooltip label={t('actions.configureNode')}>
+            <Button variant="ghost" size="icon" onClick={() => setOpenedConfigureNodeFormModal(true)}>
+              <FileInput className="h-4 w-4" />
+            </Button>
+          </SimpleTooltip>
+          {sortedNodes.length > 0 && (
+            <SimpleTooltip label={collapsed ? t('nodeList.expand') : t('nodeList.collapse')}>
+              <Button variant="ghost" size="icon" onClick={() => nodeListCollapsedAtom.set(!collapsed)}>
+                {collapsed ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+              </Button>
+            </SimpleTooltip>
+          )}
+        </Fragment>
       }
       bordered
       highlight={highlight}
@@ -64,9 +101,9 @@ export function NodeResource({
           <div
             ref={provided.innerRef}
             {...provided.droppableProps}
-            className={cn('flex flex-col gap-3 min-h-[100px]', snapshot.isDraggingOver && 'bg-primary/5 rounded-lg')}
+            className={cn('flex flex-col gap-3', collapsed ? 'min-h-[40px]' : 'min-h-[100px]', snapshot.isDraggingOver && 'bg-primary/5 rounded-lg')}
           >
-            {sortedNodes.map(({ id, name, tag, protocol, link }, index) => (
+            {visibleNodes.map(({ id, name, tag, protocol, link }, index) => (
               <SortableNodeCard
                 key={id}
                 id={`node-${id}`}
@@ -75,6 +112,19 @@ export function NodeResource({
                 leftSection={protocol}
                 actions={
                   <Fragment>
+                    {onTestNodeLatencies && (
+                      <SimpleTooltip label={t('latency.testNode')}>
+                        <Button
+                          variant="ghost"
+                          size="xs"
+                          className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+                          disabled={testingLatencies}
+                          onClick={() => runTest([id])}
+                        >
+                          <Gauge className="h-3.5 w-3.5" />
+                        </Button>
+                      </SimpleTooltip>
+                    )}
                     <SimpleTooltip label={t('actions.edit')}>
                       <Button
                         variant="ghost"
@@ -123,6 +173,24 @@ export function NodeResource({
               </SortableNodeCard>
             ))}
             {provided.placeholder}
+            {sortedNodes.length > 0 && collapsed && (
+              <button
+                type="button"
+                className="rounded-lg border border-dashed py-2 text-center text-xs text-muted-foreground hover:bg-muted"
+                onClick={() => nodeListCollapsedAtom.set(false)}
+              >
+                {t('nodeList.collapsedHint', { count: sortedNodes.length })}
+              </button>
+            )}
+            {!collapsed && sortedNodes.length > NODE_PREVIEW_COUNT && (
+              <button
+                type="button"
+                className="rounded-lg border border-dashed py-2 text-center text-xs text-primary hover:bg-muted"
+                onClick={() => nodeListExpandedAtom.set(!expandedAll)}
+              >
+                {expandedAll ? t('nodeList.showLess') : t('nodeList.showAll', { count: hiddenCount })}
+              </button>
+            )}
           </div>
         )}
       </Droppable>

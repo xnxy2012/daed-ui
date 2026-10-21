@@ -49,6 +49,9 @@ export type AppState = {
 export const modeAtom = persistentAtom<MODE>('mode')
 export const tokenAtom = persistentAtom<string>('token')
 export const endpointURLAtom = persistentAtom<string>('endpointURL', DEFAULT_ENDPOINT_URL)
+const boolCodec = { encode: JSON.stringify, decode: (v: string) => v === 'true' }
+export const nodeListCollapsedAtom = persistentAtom<boolean>('nodeListCollapsed', false, boolCodec)
+export const nodeListExpandedAtom = persistentAtom<boolean>('nodeListExpanded', false, boolCodec)
 export const logEndpointURLAtom = persistentAtom<string>('logEndpointURL', '')
 export const appStateAtom = persistentMap<AppState>(
   'APP_STATE',

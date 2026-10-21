@@ -248,7 +248,8 @@
     "testAllNodesWithStatus": "测试所有节点延迟 · 最近测速时间 {{ time }} · 已测速 {{ count }} 个节点",
     "nodesMeasured": "已测速 {{ count }} 个节点",
     "failed": "失败",
-    "unavailable": "不可用"
+    "unavailable": "不可用",
+    "testNode": "测试该节点延迟"
   },
   "link": "链接",
   "logLevel": "日志等级",
@@ -278,7 +279,8 @@
       "10m": "10 分钟",
       "30m": "30 分钟",
       "1h": "1 小时"
-    }
+    },
+    "bytesMissing": "当前有活动连接，但后端暂未返回流量字节计数。"
   },
   "notifications": {
     "login succeeded": "登录成功",
@@ -425,5 +427,12 @@
     "colDialer": "节点",
     "colPolicy": "策略",
     "colProcess": "进程 / MAC"
+  },
+  "nodeList": {
+    "collapse": "折叠列表",
+    "expand": "展开列表",
+    "showAll": "显示全部（还有 {{count}} 个）",
+    "showLess": "收起",
+    "collapsedHint": "{{count}} 个节点（已折叠）— 点击展开"
   }
 }

@@ -248,7 +248,8 @@
     "testAllNodesWithStatus": "Test all node latencies · Last tested at {{ time }} · {{ count }} nodes measured",
     "nodesMeasured": "{{ count }} nodes measured",
     "failed": "Failed",
-    "unavailable": "Unavailable"
+    "unavailable": "Unavailable",
+    "testNode": "Test this node's latency"
   },
   "link": "Link",
   "logLevel": "Log Level",
@@ -278,7 +279,8 @@
       "10m": "10m",
       "30m": "30m",
       "1h": "1h"
-    }
+    },
+    "bytesMissing": "Connections are active but the backend reports no byte counters yet."
   },
   "notifications": {
     "login succeeded": "Login Succeeded",
@@ -425,5 +427,12 @@
     "colDialer": "Node",
     "colPolicy": "Policy",
     "colProcess": "Process / MAC"
+  },
+  "nodeList": {
+    "collapse": "Collapse list",
+    "expand": "Expand list",
+    "showAll": "Show all ({{count}} more)",
+    "showLess": "Show less",
+    "collapsedHint": "{{count}} nodes (collapsed) — click to expand"
   }
 }
