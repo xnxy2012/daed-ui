@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0](https://github.com/xnxy2012/daed-ui/compare/dae-lang-core-v0.2.0...dae-lang-core-v0.3.0) (2026-10-21)
+
+
+### Features
+
+* re-trigger release-please ([4febcf7](https://github.com/xnxy2012/daed-ui/commit/4febcf7ebba807474e8215510669e0a756c31585))
+* trigger release ([e6618d5](https://github.com/xnxy2012/daed-ui/commit/e6618d5cfb721dec3633278018e2f254c23daff9))
+
 ## [0.2.0](https://github.com/daeuniverse/daed/compare/dae-lang-core-v0.1.0...dae-lang-core-v0.2.0) (2026-04-17)
 
 
