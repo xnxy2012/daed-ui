@@ -84,14 +84,8 @@ jobs:
           path: dist/
 
       # Native log stream for dae-wing: GET /logs (SSE, same port and JWT auth as /graphql).
-      - name: Apply dae-wing log-stream patch
-        run: |
-          test -f wing/go.mod || { echo "wing submodule is empty"; exit 1; }
-          git -C wing apply --check ../wing-patches/0001-logstream.patch || {
-            echo "::error::wing-patches/0001-logstream.patch does not apply to the pinned wing commit. Rebase the patch (or fork dae-wing and commit the change there)."
-            exit 1
-          }
-          git -C wing apply ../wing-patches/0001-logstream.patch
+      - name: Inject dae-wing log stream
+        run: python3 wing-patches/apply.py wing
 
       - name: make
         run: |
