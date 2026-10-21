@@ -400,5 +400,18 @@
     "targetPlaceholder": "目标",
     "upstreamNamePlaceholder": "名称 (如 alidns)",
     "upstreamLinkPlaceholder": "链接 (如 udp://223.5.5.5:53)"
+  },
+  "logs": {
+    "title": "dae 日志",
+    "search": "过滤日志…",
+    "pause": "暂停",
+    "resume": "继续",
+    "autoScroll": "自动滚动",
+    "connecting": "连接中…",
+    "connected": "实时",
+    "idle": "未连接",
+    "disconnected": "已断开",
+    "empty": "暂无日志",
+    "endpoint": "日志流地址"
   }
 }

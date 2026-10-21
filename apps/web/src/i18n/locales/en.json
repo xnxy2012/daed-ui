@@ -400,5 +400,18 @@
     "targetPlaceholder": "Target",
     "upstreamNamePlaceholder": "Name (e.g. alidns)",
     "upstreamLinkPlaceholder": "Link (e.g. udp://223.5.5.5:53)"
+  },
+  "logs": {
+    "title": "dae Logs",
+    "search": "Filter logs…",
+    "pause": "Pause",
+    "resume": "Resume",
+    "autoScroll": "Auto-scroll",
+    "connecting": "Connecting…",
+    "connected": "Live",
+    "idle": "Idle",
+    "disconnected": "Disconnected",
+    "empty": "No logs yet",
+    "endpoint": "Log stream endpoint"
   }
 }

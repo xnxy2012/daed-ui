@@ -1,0 +1,196 @@
+diff --git a/cmd/run.go b/cmd/run.go
+index 7dce577..003e4c9 100644
+--- a/cmd/run.go
++++ b/cmd/run.go
+@@ -21,6 +21,7 @@ import (
+ 	"github.com/daeuniverse/dae-wing/graphql/service/config"
+ 
+ 	"github.com/daeuniverse/dae-wing/graphql/service/subscription"
++	"github.com/daeuniverse/dae-wing/logstream"
+ 	"github.com/daeuniverse/dae-wing/webrender"
+ 	"github.com/golang-jwt/jwt/v5"
+ 	"github.com/graph-gophers/graphql-go/relay"
+@@ -65,6 +66,7 @@ var (
+ 		Use:   "run",
+ 		Short: "Run " + db.AppName + " in the foreground",
+ 		Run: func(cmd *cobra.Command, args []string) {
++			logstream.Attach(logrus.StandardLogger())
+ 			if cfgDir == "" {
+ 				logrus.Fatalln("Argument \"--config\" or \"-c\" is required but not provided.")
+ 			}
+@@ -122,6 +124,7 @@ var (
+ 			}
+ 			mux := http.NewServeMux()
+ 			mux.Handle("/graphql", auth(cors.AllowAll().Handler(&relay.Handler{Schema: schema})))
++			mux.Handle("/logs", auth(cors.AllowAll().Handler(logstream.Handler())))
+ 			if err = webrender.Handle(mux); err != nil {
+ 				errorExit(err)
+ 			}
+diff --git a/dae/run.go b/dae/run.go
+index 7c9a5cc..c7a223f 100644
+--- a/dae/run.go
++++ b/dae/run.go
+@@ -21,6 +21,7 @@ import (
+ 	"github.com/daeuniverse/dae/pkg/logger"
+ 	"github.com/daeuniverse/outbound/protocol/direct"
+ 	"github.com/mohae/deepcopy"
++	"github.com/daeuniverse/dae-wing/logstream"
+ 	"github.com/sirupsen/logrus"
+ 	"golang.org/x/sys/unix"
+ )
+@@ -127,6 +128,7 @@ loop:
+ 		logger.SetLogger(logrus.StandardLogger(), newConf.Global.LogLevel, disableTimestamp, nil)
+ 		log.SetOutput(oldLogOutput) // FIXME: THIS IS A HACK.
+ 		logrus.SetOutput(oldLogOutput)
++		logstream.Attach(log)
+ 
+ 		// dae >= 2.1.1 replaces TC programs in place through a staged handoff
+ 		// that borrows the previous generation's hook set; re-attaching the
+diff --git b/logstream/logstream.go b/logstream/logstream.go
+new file mode 100644
+index 0000000..37fb75d
+--- /dev/null
++++ b/logstream/logstream.go
+@@ -0,0 +1,142 @@
++/*
++ * SPDX-License-Identifier: AGPL-3.0-only
++ */
++
++// Package logstream keeps a ring buffer of recent log lines (fed by a logrus
++// hook) and serves them to authenticated clients as Server-Sent Events.
++package logstream
++
++import (
++	"fmt"
++	"net/http"
++	"strconv"
++	"strings"
++	"sync"
++	"time"
++
++	"github.com/sirupsen/logrus"
++)
++
++const ringSize = 5000
++
++type hub struct {
++	mu       sync.Mutex
++	ring     []string
++	subs     map[chan string]struct{}
++	attached map[*logrus.Logger]struct{}
++}
++
++var h = &hub{
++	subs:     map[chan string]struct{}{},
++	attached: map[*logrus.Logger]struct{}{},
++}
++
++type hook struct{}
++
++func (hook) Levels() []logrus.Level { return logrus.AllLevels }
++
++// Fire formats the entry with the logger's own formatter, so the stream looks
++// exactly like what dae prints on the console.
++func (hook) Fire(e *logrus.Entry) error {
++	s, err := e.String()
++	if err != nil {
++		return nil
++	}
++	s = strings.TrimRight(s, "\r\n")
++	// SSE data lines must not contain newlines: split multi-line messages.
++	for _, line := range strings.Split(s, "\n") {
++		h.push(line)
++	}
++	return nil
++}
++
++// Attach registers the hook on l (once per logger).
++func Attach(l *logrus.Logger) {
++	h.mu.Lock()
++	defer h.mu.Unlock()
++	if _, ok := h.attached[l]; ok {
++		return
++	}
++	h.attached[l] = struct{}{}
++	l.AddHook(hook{})
++}
++
++func (h *hub) push(line string) {
++	h.mu.Lock()
++	defer h.mu.Unlock()
++	h.ring = append(h.ring, line)
++	if len(h.ring) > ringSize {
++		h.ring = append([]string(nil), h.ring[len(h.ring)-ringSize:]...)
++	}
++	for ch := range h.subs {
++		select {
++		case ch <- line:
++		default: // slow consumer: drop instead of blocking the logger
++		}
++	}
++}
++
++func (h *hub) subscribe(tail int) ([]string, chan string) {
++	h.mu.Lock()
++	defer h.mu.Unlock()
++	start := 0
++	if tail >= 0 && len(h.ring) > tail {
++		start = len(h.ring) - tail
++	}
++	hist := append([]string(nil), h.ring[start:]...)
++	ch := make(chan string, 1024)
++	h.subs[ch] = struct{}{}
++	return hist, ch
++}
++
++func (h *hub) unsubscribe(ch chan string) {
++	h.mu.Lock()
++	delete(h.subs, ch)
++	h.mu.Unlock()
++}
++
++// Handler streams logs as SSE. Wrap it with the authentication middleware:
++// requests whose context carries no "user" value are rejected.
++func Handler() http.Handler {
++	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		if r.Context().Value("user") == nil {
++			http.Error(w, "unauthorized", http.StatusUnauthorized)
++			return
++		}
++		fl, ok := w.(http.Flusher)
++		if !ok {
++			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
++			return
++		}
++		tail := 500
++		if v, err := strconv.Atoi(r.URL.Query().Get("tail")); err == nil {
++			tail = v
++		}
++
++		w.Header().Set("Content-Type", "text/event-stream")
++		w.Header().Set("Cache-Control", "no-cache")
++		w.Header().Set("X-Accel-Buffering", "no")
++
++		hist, ch := h.subscribe(tail)
++		defer h.unsubscribe(ch)
++		for _, l := range hist {
++			fmt.Fprintf(w, "data: %s\n", l)
++		}
++		fl.Flush()
++
++		keepalive := time.NewTicker(15 * time.Second)
++		defer keepalive.Stop()
++		for {
++			select {
++			case <-r.Context().Done():
++				return
++			case l := <-ch:
++				fmt.Fprintf(w, "data: %s\n", l)
++				fl.Flush()
++			case <-keepalive.C:
++				fmt.Fprint(w, ": ping\n")
++				fl.Flush()
++			}
++		}
++	})
++}

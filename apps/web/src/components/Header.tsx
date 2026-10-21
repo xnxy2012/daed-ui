@@ -8,6 +8,7 @@ import {
   LogOut,
   Menu,
   RefreshCw,
+  ScrollText,
   Terminal,
   UserPen,
   Wifi,
@@ -52,6 +53,7 @@ import { fileToBase64 } from '~/utils'
 import { CommandPalette, useCommandPaletteActions } from './CommandPalette'
 import { FormActions } from './FormActions'
 import { KeyboardShortcutsModal } from './KeyboardShortcutsModal'
+import { LogPanel } from './LogPanel'
 import { ProfileSwitcher } from './ProfileSwitcher'
 import { ThemePicker } from './ThemePicker'
 
@@ -97,6 +99,7 @@ export function HeaderWithActions() {
     useDisclosure(false)
   const [openedPasswordChangeModal, { open: openPasswordChangeModal, close: closePasswordChangeModal }] =
     useDisclosure(false)
+  const [openedLogPanel, { open: openLogPanel, close: closeLogPanel }] = useDisclosure(false)
   const [openedShortcutsModal, { open: openShortcutsModal, close: closeShortcutsModal }] = useDisclosure(false)
   const [openedCommandPalette, { open: openCommandPalette, close: closeCommandPalette }] = useDisclosure(false)
   const { data: userQuery } = useUserQuery()
@@ -340,6 +343,10 @@ export function HeaderWithActions() {
                   GraphiQL
                 </Link>
               </DropdownMenuItem>
+              <DropdownMenuItem onClick={openLogPanel}>
+                <ScrollText className="mr-2 h-4 w-4" />
+                {t('logs.title')}
+              </DropdownMenuItem>
 
               <DropdownMenuLabel>{t('settings')}</DropdownMenuLabel>
               <DropdownMenuItem
@@ -386,6 +393,12 @@ export function HeaderWithActions() {
                     <GithubIcon className="h-5 w-5" />
                   </Button>
                 </a>
+              </SimpleTooltip>
+
+              <SimpleTooltip label={t('logs.title')}>
+                <Button variant="ghost" size="icon" className="rounded-full" onClick={openLogPanel}>
+                  <ScrollText className="h-5 w-5" />
+                </Button>
               </SimpleTooltip>
 
               <SimpleTooltip label={t('shortcuts.title')}>
@@ -516,6 +529,18 @@ export function HeaderWithActions() {
                   <span className="text-sm">GraphiQL</span>
                 </Button>
               </Link>
+
+              <Button
+                variant="ghost"
+                className="w-full justify-start gap-2 h-9 px-2"
+                onClick={() => {
+                  openLogPanel()
+                  closeBurger()
+                }}
+              >
+                <ScrollText className="h-4 w-4" />
+                <span className="text-sm">{t('logs.title')}</span>
+              </Button>
 
               <Button
                 variant="ghost"
@@ -673,6 +698,7 @@ export function HeaderWithActions() {
         onOpenChange={(open) => (open ? openCommandPalette() : closeCommandPalette())}
         actions={commandPaletteActions}
       />
+      <LogPanel open={openedLogPanel} onOpenChange={(o) => (o ? openLogPanel() : closeLogPanel())} />
     </header>
   )
 }
