@@ -1,0 +1,133 @@
+name: Build daed full (with dae log panel)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version string embedded in the binary (e.g. 1.28.0-log)'
+        required: false
+        default: '0.0.0-custom'
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6.0.9
+
+      - uses: actions/setup-node@v6
+        with:
+          cache: pnpm
+          node-version: latest
+
+      - name: Build web
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: |
+          pnpm install
+          pnpm build --filter daed
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: web
+          path: apps/web/dist
+
+  build-bundle:
+    needs: build-web
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux, goarch: arm64 }
+          - { goos: linux, goarch: amd64, goamd64: v1 }
+          - { goos: linux, goarch: amd64, goamd64: v3 }
+    env:
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+      GOAMD64: ${{ matrix.goamd64 }}
+      CGO_ENABLED: 0
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+          cache: false
+
+      - name: Get version / filename
+        id: meta
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
+          else
+            VERSION="${{ github.event.inputs.version || '0.0.0-custom' }}"
+          fi
+          NAME=$(jq ".[\"$GOOS-$GOARCH$GOAMD64\"].friendlyName" -r < install/friendly-filenames.json)
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "BUNDLE_NAME=daed-$NAME" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: web
+          path: dist/
+
+      # Native log stream for dae-wing: GET /logs (SSE, same port and JWT auth as /graphql).
+      - name: Apply dae-wing log-stream patch
+        run: |
+          test -f wing/go.mod || { echo "wing submodule is empty"; exit 1; }
+          git -C wing apply --check ../wing-patches/0001-logstream.patch || {
+            echo "::error::wing-patches/0001-logstream.patch does not apply to the pinned wing commit. Rebase the patch (or fork dae-wing and commit the change there)."
+            exit 1
+          }
+          git -C wing apply ../wing-patches/0001-logstream.patch
+
+      - name: make
+        run: |
+          mkdir -p ./bundled/
+          export VERSION=${{ steps.meta.outputs.VERSION }}
+          export GOFLAGS="-trimpath -modcacherw"
+          export OUTPUT=bundled/${{ steps.meta.outputs.BUNDLE_NAME }}
+          make
+          cp ./install/daed.service ./bundled/
+          cp ./install/daed.desktop ./bundled/
+          cp -r ./install/icons/ ./bundled/
+          curl -L -o ./bundled/geoip.dat https://github.com/v2rayA/dist-v2ray-rules-dat/raw/master/geoip.dat
+          curl -L -o ./bundled/geosite.dat https://github.com/v2rayA/dist-v2ray-rules-dat/raw/master/geosite.dat
+
+      - name: Smoke test
+        if: matrix.goarch == 'amd64' && matrix.goamd64 == 'v1'
+        run: ./bundled/${{ steps.meta.outputs.BUNDLE_NAME }} --version
+
+      - name: Zip
+        run: |
+          cd bundled
+          zip -9r ../${{ steps.meta.outputs.BUNDLE_NAME }}.zip .
+          cd ..
+          sha256sum ${{ steps.meta.outputs.BUNDLE_NAME }}.zip > ${{ steps.meta.outputs.BUNDLE_NAME }}.zip.sha256
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.meta.outputs.BUNDLE_NAME }}
+          path: |
+            ${{ steps.meta.outputs.BUNDLE_NAME }}.zip
+            ${{ steps.meta.outputs.BUNDLE_NAME }}.zip.sha256
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ steps.meta.outputs.BUNDLE_NAME }}.zip
+            ${{ steps.meta.outputs.BUNDLE_NAME }}.zip.sha256
