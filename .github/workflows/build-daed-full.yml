@@ -90,6 +90,10 @@ jobs:
       - name: Inject dae-wing log stream
         run: python3 wing-patches/apply.py wing
 
+      # Live traffic stats: upstream only accounts offloaded TCP flows when they close.
+      - name: Patch dae-core live traffic accounting
+        run: python3 wing-patches/apply_dae_traffic.py wing/dae-core
+
       - name: make
         run: |
           mkdir -p ./bundled/
