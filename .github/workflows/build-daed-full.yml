@@ -94,6 +94,20 @@ jobs:
       - name: Patch dae-core live traffic accounting
         run: python3 wing-patches/apply_dae_traffic.py wing/dae-core
 
+      # Diagnostics only: shows which dae-core is really being built and where traffic bytes are recorded.
+      - name: Diagnose dae-core traffic accounting
+        continue-on-error: true
+        run: |
+          echo "== wing commit";      git -C wing rev-parse --short HEAD || true
+          echo "== dae-core version"; git -C wing/dae-core describe --tags --always || true
+          echo "== dae-core commit";  git -C wing/dae-core log -1 --format='%h %cd %s' || true
+          echo "== control dir";      ls wing/dae-core/control | tr '\n' ' ' || true; echo
+          echo "== offload file";     ls wing/dae-core/control/tcp_offload_linux.go 2>&1 || true
+          echo "== patch marker";     grep -c flushLiveTraffic wing/dae-core/control/tcp_offload_linux.go 2>&1 || true
+          echo "== traffic recorders"
+          grep -rnE "Record(Upload|Download)Traffic|(upload|download)Recorder" wing/dae-core/control --include=*.go | grep -v _test | head -40 || true
+          echo "== snapshot users";   grep -rn "SnapshotRuntimeStats" wing --include=*.go | head || true
+
       - name: make
         run: |
           mkdir -p ./bundled/
