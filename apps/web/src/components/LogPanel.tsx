@@ -34,9 +34,11 @@ interface LogLine {
 
 const LEVELS: LogLevel[] = ['trace', 'debug', 'info', 'warn', 'error']
 const MAX_BUFFER = 5000
+const MAX_CONNS = 5000
 const MAX_RENDER = 1500
 const ANSI_RE = /\x1B\[[0-9;]*m/g
-const LEVEL_RE = /level=(trace|debug|info|warn|warning|error|fatal|panic)\b|\b(TRAC|DEBU|INFO|WARN|ERRO|FATA|PANI)\b/
+const LEVEL_RE =
+  /level=(trace|debug|info|warn|warning|error|fatal|panic)\b|\b(TRACE|DEBUG|INFO|WARN|WARNING|ERROR|FATAL|PANIC|TRAC|DEBU|ERRO|FATA|PANI)\b/
 const KV_RE = /([A-Za-z_][\w.]*)=("(?:[^"\\]|\\.)*"|\S*)/g
 const CONN_RE = /(\S+) <-> (\S+)/
 
@@ -80,16 +82,29 @@ function parseKV(raw: string) {
   return out
 }
 
-function parseConn(raw: string): Conn | undefined {
-  if (!raw.includes(' <-> ')) return undefined
-  const f = parseKV(raw)
-  const m = CONN_RE.exec(f.msg ?? '')
-  if (!m) return undefined
+const PREFIXED_CONN_RE = /^\[([^\]]+)\]\s+\w+\s+(\S+) <-> (\S+)(.*)$/
+
+/** Fields after the message look like `dialer=🇯🇵 GreenCloud dscp=0 ... sniffed=`; values may contain spaces. */
+function parseSpacedFields(rest: string) {
+  const out: Record<string, string> = {}
+  const marks = [...rest.matchAll(/(?:^|\s)([a-z_][a-z0-9_]*)=/g)]
+  marks.forEach((m, i) => {
+    const start = (m.index ?? 0) + m[0].length
+    const end = i + 1 < marks.length ? (marks[i + 1].index ?? rest.length) : rest.length
+    out[m[1]] = rest.slice(start, end).trim()
+  })
+  return out
+}
+
+function toConn(time: string, src: string, dst: string, f: Record<string, string>): Conn | undefined {
+  // Real connection records carry routing fields; this skips other "A <-> B" lines
+  // (e.g. "TCP relay eBPF offload: ...", netkit device pairs).
+  if (!(f.outbound || f.dialer)) return undefined
   return {
-    time: f.time ?? '',
+    time,
     network: f.network ?? f.l4proto ?? '',
-    src: m[1],
-    dst: m[2],
+    src,
+    dst,
     host: f.sniffed ?? '',
     outbound: f.outbound ?? f.group ?? '',
     dialer: f.dialer ?? '',
@@ -97,6 +112,21 @@ function parseConn(raw: string): Conn | undefined {
     proc: f.pname ?? '',
     mac: f.mac ?? '',
   }
+}
+
+function parseConn(raw: string): Conn | undefined {
+  if (!raw.includes(' <-> ')) return undefined
+  const p = PREFIXED_CONN_RE.exec(raw)
+  if (p) return toConn(p[1], p[2], p[3], parseSpacedFields(p[4]))
+  // logfmt: time="..." level=info msg="A <-> B" key=value ...
+  const f = parseKV(raw)
+  const m = CONN_RE.exec(f.msg ?? '')
+  if (!m) return undefined
+  return toConn(f.time ?? '', m[1], m[2], f)
+}
+
+function shortTime(t: string) {
+  return /\d{2}:\d{2}:\d{2}/.exec(t)?.[0] ?? t
 }
 
 function outboundClass(name: string) {
@@ -177,6 +207,7 @@ export function LogPanel({ open, onOpenChange }: { open: boolean; onOpenChange: 
 
   const [tab, setTab] = useState<'connections' | 'logs'>('connections')
   const [lines, setLines] = useState<LogLine[]>([])
+  const [conns, setConns] = useState<(Conn & { id: number })[]>([])
   const [paused, setPaused] = useState(false)
   const [autoScroll, setAutoScroll] = useState(true)
   const [keyword, setKeyword] = useState('')
@@ -195,7 +226,7 @@ export function LogPanel({ open, onOpenChange }: { open: boolean; onOpenChange: 
   const [errorMsg, setErrorMsg] = useState('')
 
   const pausedRef = useRef(false)
-  const pendingRef = useRef<LogLine[]>([])
+  const incomingRef = useRef<LogLine[]>([])
   const idRef = useRef(0)
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -205,20 +236,35 @@ export function LogPanel({ open, onOpenChange }: { open: boolean; onOpenChange: 
     pausedRef.current = paused
   }, [paused])
 
+  // Lines are queued here and flushed in batches, so a burst (history replay, debug floods) is cheap.
   const push = useCallback((raw: string) => {
     const clean = raw.replace(ANSI_RE, '')
     if (!clean.trim()) return
-    const line: LogLine = { id: idRef.current++, raw: clean, level: parseLevel(clean), conn: parseConn(clean) }
-    if (pausedRef.current) {
-      pendingRef.current.push(line)
-      return
-    }
-    setLines((prev) => {
-      const next = prev.length >= MAX_BUFFER ? prev.slice(prev.length - MAX_BUFFER + 1) : prev.slice()
-      next.push(line)
-      return next
-    })
+    const q = incomingRef.current
+    q.push({ id: idRef.current++, raw: clean, level: parseLevel(clean), conn: parseConn(clean) })
+    if (q.length > MAX_BUFFER * 2) q.splice(0, q.length - MAX_BUFFER * 2)
   }, [])
+
+  useEffect(() => {
+    if (!open) return
+    const timer = setInterval(() => {
+      if (pausedRef.current || incomingRef.current.length === 0) return
+      const batch = incomingRef.current
+      incomingRef.current = []
+      setLines((prev) => {
+        const next = prev.concat(batch)
+        return next.length > MAX_BUFFER ? next.slice(next.length - MAX_BUFFER) : next
+      })
+      const cs = batch.flatMap((l) => (l.conn ? [{ id: l.id, ...l.conn }] : []))
+      if (cs.length) {
+        setConns((prev) => {
+          const next = prev.concat(cs)
+          return next.length > MAX_CONNS ? next.slice(next.length - MAX_CONNS) : next
+        })
+      }
+    }, 250)
+    return () => clearInterval(timer)
+  }, [open])
 
   // Stream via fetch so that the Authorization header can be sent (EventSource cannot).
   useEffect(() => {
@@ -269,16 +315,7 @@ export function LogPanel({ open, onOpenChange }: { open: boolean; onOpenChange: 
     }
   }, [open, logURL, token, push])
 
-  const togglePause = useCallback(() => {
-    setPaused((p) => {
-      if (p && pendingRef.current.length) {
-        const pending = pendingRef.current
-        pendingRef.current = []
-        setLines((prev) => [...prev, ...pending].slice(-MAX_BUFFER))
-      }
-      return !p
-    })
-  }, [])
+  const togglePause = useCallback(() => setPaused((p) => !p), [])
 
   // ---- raw logs view
   const visibleLogs = useMemo(() => {
@@ -292,7 +329,7 @@ export function LogPanel({ open, onOpenChange }: { open: boolean; onOpenChange: 
   }, [lines, keyword, enabled])
 
   // ---- connections view
-  const allConns = useMemo(() => lines.flatMap((l) => (l.conn ? [{ id: l.id, ...l.conn }] : [])), [lines])
+  const allConns = conns
   const outboundCounts = useMemo(() => countBy(allConns, (c) => c.outbound), [allConns])
   const dialerCounts = useMemo(() => countBy(allConns, (c) => c.dialer).slice(0, 12), [allConns])
   const visibleConns = useMemo(() => {
@@ -426,7 +463,8 @@ export function LogPanel({ open, onOpenChange }: { open: boolean; onOpenChange: 
               className="h-8"
               onClick={() => {
                 setLines([])
-                pendingRef.current = []
+                setConns([])
+                incomingRef.current = []
               }}
             >
               <Trash2 className="h-4 w-4" />
@@ -505,7 +543,7 @@ export function LogPanel({ open, onOpenChange }: { open: boolean; onOpenChange: 
               <tbody>
                 {visibleConns.map((c) => (
                   <tr key={c.id} className="border-t border-border/50 hover:bg-muted/60">
-                    <td className={cn(td, 'whitespace-nowrap text-muted-foreground')}>{c.time.replace(/^\w{3} \d+ /, '')}</td>
+                    <td className={cn(td, 'whitespace-nowrap text-muted-foreground')}>{shortTime(c.time)}</td>
                     <td className={cn(td, 'uppercase')}>{c.network}</td>
                     <td className={cn(td, 'whitespace-nowrap')}>{highlight(c.src, keyword)}</td>
                     <td className={cn(td, 'max-w-[28rem] break-all')}>
