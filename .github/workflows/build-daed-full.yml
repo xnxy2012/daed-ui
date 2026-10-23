@@ -7,6 +7,10 @@ on:
         description: 'Version string embedded in the binary (e.g. 1.28.0-log)'
         required: false
         default: '0.0.0-custom'
+      wing_ref:
+        description: 'dae-wing ref to build: main, a tag/commit, or "pinned" to keep the commit this repo pins'
+        required: false
+        default: 'main'
   push:
     tags:
       - 'v*'
@@ -86,6 +90,24 @@ jobs:
           name: web
           path: dist/
 
+      - name: Switch dae-wing (and its dae-core) to the requested ref
+        env:
+          WING_REF: ${{ github.event.inputs.wing_ref }}
+        run: |
+          REF="${WING_REF//[[:space:]]/}"
+          REF="${REF:-main}"
+          if [ "$REF" = "pinned" ]; then
+            echo "Keeping the pinned dae-wing commit"
+          else
+            git -C wing fetch --depth=1 origin "$REF"
+            git -C wing checkout -f FETCH_HEAD
+            git -C wing submodule sync --recursive
+            git -C wing submodule update --init --recursive --depth 1
+          fi
+          echo "dae-wing : $(git -C wing log -1 --format='%h %cd %s')"
+          echo "dae-core : $(git -C wing/dae-core describe --tags --always 2>/dev/null || git -C wing/dae-core rev-parse --short HEAD)"
+          grep -n "^go " wing/go.mod
+
       # Native log stream for dae-wing: GET /logs (SSE, same port and JWT auth as /graphql).
       - name: Inject dae-wing log stream
         run: python3 wing-patches/apply.py wing
@@ -114,7 +136,7 @@ jobs:
           export VERSION="${{ steps.meta.outputs.VERSION }}"
           export GOFLAGS="-trimpath -modcacherw"
           export OUTPUT="bundled/${{ steps.meta.outputs.BUNDLE_NAME }}"
-          make
+          make SKIP_SUBMODULES=1
           cp ./install/daed.service ./bundled/
           cp ./install/daed.desktop ./bundled/
           cp -r ./install/icons/ ./bundled/
