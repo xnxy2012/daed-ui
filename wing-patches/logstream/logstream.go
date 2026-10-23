@@ -17,11 +17,21 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-const ringSize = 5000
+const (
+	ringSize     = 5000  // general lines
+	connRingSize = 10000 // connection records are kept separately so debug noise cannot evict them
+)
+
+type item struct {
+	seq  uint64
+	line string
+}
 
 type hub struct {
 	mu       sync.Mutex
-	ring     []string
+	seq      uint64
+	ring     []item
+	connRing []item
 	subs     map[chan string]struct{}
 	attached map[*logrus.Logger]struct{}
 }
@@ -29,6 +39,28 @@ type hub struct {
 var h = &hub{
 	subs:     map[chan string]struct{}{},
 	attached: map[*logrus.Logger]struct{}{},
+}
+
+// noisy debug lines that are emitted continuously and carry no information for the panel.
+var noise = []string{
+	"converting to graphQL int32",
+	"cleanupRoutingHandoffMap",
+	"cleanupConnStateMap",
+}
+
+func isNoise(line string) bool {
+	for _, n := range noise {
+		if strings.Contains(line, n) {
+			return true
+		}
+	}
+	return false
+}
+
+// isConn reports whether the line is a per-connection routing record ("A <-> B dialer=... outbound=...").
+func isConn(line string) bool {
+	return strings.Contains(line, " <-> ") &&
+		(strings.Contains(line, "outbound=") || strings.Contains(line, "dialer="))
 }
 
 type hook struct{}
@@ -61,12 +93,25 @@ func Attach(l *logrus.Logger) {
 	l.AddHook(hook{})
 }
 
+func trim(r []item, max int) []item {
+	if len(r) > max {
+		return append([]item(nil), r[len(r)-max:]...)
+	}
+	return r
+}
+
 func (h *hub) push(line string) {
+	if isNoise(line) {
+		return
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.ring = append(h.ring, line)
-	if len(h.ring) > ringSize {
-		h.ring = append([]string(nil), h.ring[len(h.ring)-ringSize:]...)
+	h.seq++
+	it := item{seq: h.seq, line: line}
+	if isConn(line) {
+		h.connRing = trim(append(h.connRing, it), connRingSize)
+	} else {
+		h.ring = trim(append(h.ring, it), ringSize)
 	}
 	for ch := range h.subs {
 		select {
@@ -76,14 +121,29 @@ func (h *hub) push(line string) {
 	}
 }
 
+func tailOf(r []item, n int) []item {
+	if n >= 0 && len(r) > n {
+		return r[len(r)-n:]
+	}
+	return r
+}
+
+// subscribe returns up to tail lines of each ring, merged in arrival order, plus a live channel.
 func (h *hub) subscribe(tail int) ([]string, chan string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	start := 0
-	if tail >= 0 && len(h.ring) > tail {
-		start = len(h.ring) - tail
+	a, b := tailOf(h.ring, tail), tailOf(h.connRing, tail)
+	hist := make([]string, 0, len(a)+len(b))
+	i, j := 0, 0
+	for i < len(a) || j < len(b) {
+		if j >= len(b) || (i < len(a) && a[i].seq < b[j].seq) {
+			hist = append(hist, a[i].line)
+			i++
+		} else {
+			hist = append(hist, b[j].line)
+			j++
+		}
 	}
-	hist := append([]string(nil), h.ring[start:]...)
 	ch := make(chan string, 1024)
 	h.subs[ch] = struct{}{}
 	return hist, ch
