@@ -11,6 +11,10 @@ on:
         description: 'dae-wing ref to build: main, a tag/commit, or "pinned" to keep the commit this repo pins'
         required: false
         default: 'main'
+      dae_ref:
+        description: 'dae-core ref to force (e.g. main). Empty = whatever dae-wing pins, upgraded to main automatically if it is too old'
+        required: false
+        default: ''
   push:
     tags:
       - 'v*'
@@ -93,20 +97,32 @@ jobs:
       - name: Switch dae-wing (and its dae-core) to the requested ref
         env:
           WING_REF: ${{ github.event.inputs.wing_ref }}
+          DAE_REF: ${{ github.event.inputs.dae_ref }}
         run: |
-          REF="${WING_REF//[[:space:]]/}"
-          REF="${REF:-main}"
-          if [ "$REF" = "pinned" ]; then
+          WING_REF="${WING_REF//[[:space:]]/}"; WING_REF="${WING_REF:-main}"
+          DAE_REF="${DAE_REF//[[:space:]]/}"
+          if [ "$WING_REF" = "pinned" ]; then
             echo "Keeping the pinned dae-wing commit"
           else
-            git -C wing fetch --depth=1 origin "$REF"
+            git -C wing fetch --depth=1 origin "$WING_REF"
             git -C wing checkout -f FETCH_HEAD
             git -C wing submodule sync --recursive
             git -C wing submodule update --init --recursive --depth 1
+            # dae-wing's generated code calls config.Marshaller.Bytes(); older dae-core lacks it.
+            if [ -z "$DAE_REF" ] && ! grep -q 'func (m \*Marshaller) Bytes' wing/dae-core/config/marshal.go; then
+              echo "::warning::pinned dae-core is too old for this dae-wing (no Marshaller.Bytes); using dae-core main"
+              DAE_REF=main
+            fi
+          fi
+          if [ -n "$DAE_REF" ]; then
+            git -C wing/dae-core fetch --depth=1 origin "$DAE_REF"
+            git -C wing/dae-core checkout -f FETCH_HEAD
+            git -C wing/dae-core submodule update --init --recursive --depth 1 || true
           fi
           echo "dae-wing : $(git -C wing log -1 --format='%h %cd %s')"
-          echo "dae-core : $(git -C wing/dae-core describe --tags --always 2>/dev/null || git -C wing/dae-core rev-parse --short HEAD)"
+          echo "dae-core : $(git -C wing/dae-core log -1 --format='%h %cd %s')"
           grep -n "^go " wing/go.mod
+          grep -c 'func (m \*Marshaller) Bytes' wing/dae-core/config/marshal.go || true
 
       # Native log stream for dae-wing: GET /logs (SSE, same port and JWT auth as /graphql).
       - name: Inject dae-wing log stream
